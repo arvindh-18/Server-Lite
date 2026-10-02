@@ -5,3 +5,4 @@ I building this mainly as a learning project to understand what actually happens
 
 LOGS for LEARNING
 1. Learnt to operate with files only using open,read,close and write.
+2. Built a simple TCP server that handles one client and succesfully tested it with nc.
