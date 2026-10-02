@@ -20,7 +20,7 @@ int main() {
 
     // 3. Listen
     listen(listen_fd, 1);
-    std::cout << "Listening on 127.0.0.1: " << PORT;
+    std::cout << "Listening on 127.0.0.1: " << PORT << "\n";
 
     // 4. Accept
     sockaddr_in client_addr{};
