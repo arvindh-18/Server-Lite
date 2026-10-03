@@ -50,7 +50,6 @@ void handleClient(int);
 
 // Main server
 int main() {
-int main() {
     int listen_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (listen_fd < 0) {
         logMessage(LogLevel::ERROR, "Failed to create socket");
@@ -95,7 +94,6 @@ int main() {
 
     close(listen_fd);
     return 0;
-}
 }
 
 // This function ensures that all data is sent over the socket and handles partial sends if interruped.
