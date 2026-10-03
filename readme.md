@@ -11,3 +11,5 @@ LOGS:
 ![Alternative text description](images/demo2.png)
 4. I have replaced naive single-packet read() and write() calls with an accumulated, signal-safe (EINTR) recv() loop that halts on \r\n\r\n, full-buffer sendAll(), case-insensitive header parsing with Host validation, a directory traversal guard (.. check).
 ![Alternative text description](images/demo3.png)
+5. Added Logging system with Time Stap and Status
+![Alternative text description](images/demo4.png)
