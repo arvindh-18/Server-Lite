@@ -70,7 +70,7 @@ int main() {
         return 1;
     }
 
-    cout << "Phase 2 Server listening on http://127.0.0.1: "<< PORT << "\n";
+    cout << "Server listening on http://127.0.0.1: "<< PORT << "\n";
 
     while (true) {
         sockaddr_in client_addr{};
