@@ -1,32 +1,59 @@
 #include <iostream>
-#include <sstream>
 #include <string>
+#include <sstream>
+#include <unordered_map>
+#include <cctype>
+#include <algorithm>
+#include <cstring>
+#include <cerrno>
+#include <csignal>
 #include <unistd.h>
 #include <arpa/inet.h>
+#include <sys/socket.h>
 
-using namespace std;
 
 #define PORT 8080
-#define BUFFER_SIZE 4096
+#define MAX_HEADER_SIZE 8192
+#define MAX_BODY_SIZE   1048576
 
-// Preparing a simple HTTP response
-void sendTextResponse(int& client_fd, int statusCode, const string& statusText, const string& message) {
-    ostringstream response;
-    response << "HTTP/1.1 " << statusCode << " " << statusText << "\r\n"<< "Content-Length: " << message.size() << "\r\n"<< "Connection: close\r\n\r\n"<< message;
-    string text = response.str();
-    write(client_fd, text.data(), text.size());
-}
+using namespace std; 
 
+// Mapping HTTPS status codes with their corresponding messages
+unordered_map<int, string> STATUS_MESSAGES = {
+    {200, "OK"},
+    {400, "Bad Request"},
+    {403, "Forbidden"},
+    {404, "Not Found"},
+    {405, "Method Not Allowed"},
+    {413, "Content Too Large"},
+    {501, "Not Implemented"}
+};
+
+struct HttpRequest {
+    string method,target,version;
+    unordered_map<string, string> headers;
+    string body;
+    size_t content_length = 0;
+};
+
+
+bool sendAll(int,const char*,size_t);
+void sendResponse(int,int,string,const string&);
+void sendErrorResponse(int,int);
+string trim(const string&);
+string toLower(string);
+int parseRequest(const string&, HttpRequest&);
+void handleClient(int);
+
+
+// Main server
 int main() {
-    // 1. Create socket
     int listen_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (listen_fd < 0) return 1;
 
-    // Reuse por
     int option = 1;
     setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &option, sizeof(option));
 
-    // 2. Bind to 127.0.0.1:8080
     sockaddr_in server_addr{};
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(PORT);
@@ -38,58 +65,138 @@ int main() {
         return 1;
     }
 
-    // 3. Listen
-    listen(listen_fd, 1);
-    cout << "Server listening on http://127.0.0.1:" << PORT << "\n";
-
-    // 4. Accept one client
-    sockaddr_in client_addr{};
-    socklen_t addr_len = sizeof(client_addr);
-    int client_fd = accept(listen_fd, (sockaddr*)&client_addr, &addr_len);
-    if (client_fd < 0) {
+    if (listen(listen_fd, 10) < 0) {
         close(listen_fd);
         return 1;
     }
 
-    close(listen_fd); // Serve this one client only
+    cout << "Phase 2 Server listening on http://127.0.0.1: "<< PORT << "\n";
 
-    // 5. Read the request
-    char buffer[BUFFER_SIZE];
-    ssize_t bytes_read = read(client_fd, buffer, sizeof(buffer) - 1);
-    if (bytes_read <= 0) {
-        close(client_fd);
-        return 1;
-    }
-    buffer[bytes_read] = '\0';
+    while (true) {
+        sockaddr_in client_addr{};
+        socklen_t addr_len = sizeof(client_addr);
+        int client_fd = accept(listen_fd, (sockaddr*)&client_addr, &addr_len);
+        if (client_fd < 0) {
+            if (errno == EINTR) continue;
+            cerr << "Accept failed\n";
+            continue;
+        }
 
-    // 6. Parse method, target, and version
-    string raw(buffer);
-    istringstream stream(raw);
-    string method, target, version;
-
-    // Check and returning 0 if the request is not properly given in the expected format
-    if (!(stream >> method >> target >> version)) {
-        sendTextResponse(client_fd, 400, "Bad Request", "400 Bad Request\n");
-        close(client_fd);
-        return 0;
+        handleClient(client_fd);
     }
 
-    // Not a GET request so we return 405
-    if (method != "GET") {
-        sendTextResponse(client_fd, 405, "Method Not Allowed", "405 Method Not Allowed\n");
-        close(client_fd);
-        return 0;
-    }
-
-    // Currently only "/" returns OK, anything else is 404
-    if (target == "/") {
-        sendTextResponse(client_fd, 200, "OK", "Welcome to Light Server Machi..\n");
-    } else {
-        sendTextResponse(client_fd, 404, "Not Found", "404 Not Found\n");
-    }
-
-    // 7. Cleanup
-    close(client_fd);
-    cout << "Request finished.\n";
+    close(listen_fd);
     return 0;
+}
+
+// This function ensures that all data is sent over the socket and handles partial sends if interruped.
+bool sendAll(int socket_fd, const char* data, size_t length) {
+    size_t total_sent = 0;
+    while (total_sent < length) {
+        ssize_t sent = send(socket_fd, data + total_sent, length - total_sent, 0);
+        if (sent < 0) {
+            if (errno == EINTR) continue; // Checks if someother OS interrupt occurred, and if so, it continues the loop to retry sending the data.
+            return false;        
+        }
+        if (sent == 0) return false;     
+        total_sent += sent;
+    }
+    return true;
+}
+
+//This function will contruct the HTTP reponase and send it to the client by calling sendAll funciton.
+void sendResponse(int client_fd, int statusCode, string statusText, const string& body) {
+    ostringstream response;
+    response << "HTTP/1.1 " << statusCode << " " << statusText << "\r\n"
+             << "Content-Length: " << body.size() << "\r\n"
+             << "Content-Type: text/plain\r\n"
+             << "Connection: close\r\n\r\n"
+             << body;
+
+    string text = response.str();
+    sendAll(client_fd, text.data(), text.size());
+}
+
+//This funcation will send the status code and the corresponding message to the client by calling sendResponse function.
+void sendErrorResponse(int client_fd, int statusCode) {
+    auto it = STATUS_MESSAGES.find(statusCode);
+    string statusText;
+    if(it == STATUS_MESSAGES.end()) statusText = "Error";
+    statusText = it->second;
+    sendResponse(client_fd, statusCode,statusText, to_string(statusCode) + " " + statusText + "\r\n");
+}
+
+//This function will trim the leading and trailing whitespaces
+string trim(const string& str) {
+    size_t first = str.find_first_not_of(" \t\r\n");
+    if (first == string::npos) return "";
+    size_t last = str.find_last_not_of(" \t\r\n");
+    return str.substr(first, (last - first + 1));
+}
+
+//This function will supports case-insesitive header 
+string toLower(string s) {
+    for (char &c : s) c = tolower(static_cast<unsigned char>(c));
+    return s;
+}
+
+
+//This function will parse the HTTP request and return the status code.
+int parseRequest(const string& raw_buffer, HttpRequest& req) {
+    size_t header_end = raw_buffer.find("\r\n\r\n");
+    if (header_end == string::npos) return 0; // Keep reading
+
+    istringstream stream(raw_buffer.substr(0, header_end));
+    string line;
+
+    if (!(stream >> req.method >> req.target >> req.version)) return 400;
+    if (req.method != "GET") return 501;
+    if (req.target.find("..") != string::npos) return 403;
+
+    getline(stream, line);
+    while (getline(stream, line)) {
+        size_t colon = line.find(':');
+        if (colon == string::npos) continue;
+
+        string key = toLower(trim(line.substr(0, colon)));
+        string val = trim(line.substr(colon + 1));
+        req.headers[key] = val;
+    }
+
+    if (req.version == "HTTP/1.1" && req.headers.find("host") == req.headers.end()) {
+        return 400;
+    }
+
+    return 200;
+}
+
+
+void handleClient(int client_fd) {
+    string raw_buffer;
+    char chunk[1024];
+    HttpRequest req;
+    int status = 0;
+
+    // Read until headers are complete (\r\n\r\n found)
+    while (status == 0) {
+        ssize_t bytes = recv(client_fd, chunk, sizeof(chunk), 0);
+        if (bytes <= 0) {
+            if (bytes < 0 && errno == EINTR) continue;
+            close(client_fd);
+            return;
+        }
+
+        raw_buffer.append(chunk, bytes);
+        status = parseRequest(raw_buffer, req);
+    }
+
+    if (status != 200) {
+        sendErrorResponse(client_fd, status);
+    } else if (req.target == "/") {
+        sendResponse(client_fd, 200,"OK","Welcome to Light Server!\r\n");
+    } else {
+        sendErrorResponse(client_fd, 404);
+    }
+
+    close(client_fd);
 }
