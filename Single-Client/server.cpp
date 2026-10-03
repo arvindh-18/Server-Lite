@@ -16,6 +16,8 @@
 #define MAX_HEADER_SIZE 8192
 #define MAX_BODY_SIZE   1048576
 
+#include "logger.h"
+
 using namespace std; 
 
 // Mapping HTTPS status codes with their corresponding messages
@@ -48,8 +50,12 @@ void handleClient(int);
 
 // Main server
 int main() {
+int main() {
     int listen_fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (listen_fd < 0) return 1;
+    if (listen_fd < 0) {
+        logMessage(LogLevel::ERROR, "Failed to create socket");
+        return 1;
+    }
 
     int option = 1;
     setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &option, sizeof(option));
@@ -60,25 +66,27 @@ int main() {
     server_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
 
     if (bind(listen_fd, (sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
-        cerr << "Bind failed\n";
+        logMessage(LogLevel::ERROR, "Socket bind failed");
         close(listen_fd);
         return 1;
     }
 
     if (listen(listen_fd, 10) < 0) {
+        logMessage(LogLevel::ERROR, "Socket listen failed");
         close(listen_fd);
         return 1;
     }
 
-    cout << "Server listening on http://127.0.0.1: "<< PORT << "\n";
+    logMessage(LogLevel::INFO, "Server listening on http://127.0.0.1:" + to_string(PORT));
 
     while (true) {
         sockaddr_in client_addr{};
         socklen_t addr_len = sizeof(client_addr);
         int client_fd = accept(listen_fd, (sockaddr*)&client_addr, &addr_len);
+
         if (client_fd < 0) {
             if (errno == EINTR) continue;
-            cerr << "Accept failed\n";
+            logMessage(LogLevel::WARN, "Accept failed");
             continue;
         }
 
@@ -87,6 +95,7 @@ int main() {
 
     close(listen_fd);
     return 0;
+}
 }
 
 // This function ensures that all data is sent over the socket and handles partial sends if interruped.
@@ -191,12 +200,13 @@ void handleClient(int client_fd) {
     }
 
     if (status != 200) {
+        logMessage(LogLevel::WARN, "Rejected request with status " + to_string(status));
         sendErrorResponse(client_fd, status);
     } else if (req.target == "/") {
-        sendResponse(client_fd, 200,"OK","Welcome to Light Server!\r\n");
+        logMessage(LogLevel::INFO, req.method + " " + req.target + " - 200 OK");
+        sendResponse(client_fd, 200, "OK", "Welcome to Light Server!\r\n");
     } else {
+        logMessage(LogLevel::INFO, req.method + " " + req.target + " - 404 Not Found");
         sendErrorResponse(client_fd, 404);
     }
-
-    close(client_fd);
 }
