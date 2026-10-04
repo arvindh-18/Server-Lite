@@ -38,7 +38,6 @@ struct HttpRequest {
     size_t content_length = 0;
 };
 
-
 bool sendAll(int,const char*,size_t);
 void sendResponse(int,int,string,const string&);
 void sendErrorResponse(int,int);
@@ -46,11 +45,20 @@ string trim(const string&);
 string toLower(string);
 int parseRequest(const string&, HttpRequest&);
 void handleClient(int);
+void handleSigint(int);
+
+volatile sig_atomic_t is_running = 1;
 
 
 // Main server
 int main() {
+
     int listen_fd = socket(AF_INET, SOCK_STREAM, 0);
+
+    struct sigaction sa{};
+    sa.sa_handler = handleSigint;
+    sigaction(SIGINT, &sa, nullptr);
+
     if (listen_fd < 0) {
         logMessage(LogLevel::ERROR, "Failed to create socket");
         return 1;
@@ -78,12 +86,13 @@ int main() {
 
     logMessage(LogLevel::INFO, "Server listening on http://127.0.0.1:" + to_string(PORT));
 
-    while (true) {
+    while (is_running) {
         sockaddr_in client_addr{};
         socklen_t addr_len = sizeof(client_addr);
         int client_fd = accept(listen_fd, (sockaddr*)&client_addr, &addr_len);
 
         if (client_fd < 0) {
+            if(!is_running) break; // Exit loop if server is shutting down
             if (errno == EINTR) continue;
             logMessage(LogLevel::WARN, "Accept failed");
             continue;
@@ -93,6 +102,7 @@ int main() {
     }
 
     close(listen_fd);
+    logMessage(LogLevel::INFO, "Server shutting down gracefully.");
     return 0;
 }
 
@@ -207,4 +217,9 @@ void handleClient(int client_fd) {
         logMessage(LogLevel::INFO, req.method + " " + req.target + " - 404 Not Found");
         sendErrorResponse(client_fd, 404);
     }
+}
+
+void handleSigint(int signum) {
+    is_running = 0;
+    logMessage(LogLevel::INFO, "SIGINT received, shutting down server...");
 }
