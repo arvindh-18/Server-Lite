@@ -6,6 +6,8 @@
 #include <cctype>
 #include <algorithm>
 #include <cstring>
+#include <cstdlib>
+#include <climits>
 #include <cerrno>
 #include <csignal>
 #include <unistd.h>
@@ -16,7 +18,6 @@
 
 #define PORT 8080
 #define MAX_HEADER_SIZE 8192
-#define MAX_BODY_SIZE   1048576
 
 #include "logger.h"
 
@@ -48,6 +49,7 @@ string toLower(string);
 int parseRequest(const string&, HttpRequest&);
 void handleClient(int);
 void handleSigint(int);
+bool isSafePath(const string&, const string&, string&);
 
 volatile sig_atomic_t is_running = 1;
 
@@ -206,6 +208,14 @@ void handleClient(int client_fd) {
 
     // Read until headers are complete (\r\n\r\n found)
     while (status == 0) {
+
+        if (raw_buffer.size() > MAX_HEADER_SIZE) {
+            logMessage(LogLevel::WARN, "Header size exceeded limit");
+            sendErrorResponse(client_fd, 413);
+            close(client_fd);
+            return;
+        }
+
         ssize_t bytes = recv(client_fd, chunk, sizeof(chunk), 0);
         if (bytes <= 0) {
             if (bytes < 0 && errno == EINTR) continue;
@@ -224,12 +234,47 @@ void handleClient(int client_fd) {
         logMessage(LogLevel::INFO, req.method + " " + req.target + " - 200 OK");
         sendResponse(client_fd, 200, "OK", "Welcome to Light Server!\r\n");
     } else {
-        logMessage(LogLevel::INFO, req.method + " " + req.target + " - 404 Not Found");
-        sendErrorResponse(client_fd, 404);
+        string web_root = "./public";
+        string resolved_path;
+        if (isSafePath(web_root, user_file, resolved_path)) {
+            // Path is safe and file exists! (You can read and send the file here later)
+            logMessage(LogLevel::INFO, req.method + " " + req.target + " - 200 OK (File Found)");
+            sendResponse(client_fd, 200, "OK", "File found at: " + resolved_path + "\r\n");
+        } else {
+            // Path traversal detected or file doesn't exist
+            logMessage(LogLevel::WARN, "Blocked path traversal or file not found: " + req.target);
+            sendErrorResponse(client_fd, 403); 
+        }
     }
 }
 
 void handleSigint(int signum) {
     is_running = 0;
     logMessage(LogLevel::INFO, "SIGINT received, shutting down server...");
+}
+
+bool isSafePath(const string& base_dir, const string& user_path, string& resolved_full_path) {
+    
+    // Resolve the canonical path of the root directory first
+    char base_canonical[PATH_MAX];
+    if (realpath(base_dir.c_str(), base_canonical) == nullptr) {
+        return false; // Web root directory doesn't exist
+    }
+
+    string combined_path = string(base_canonical) + "/" + user_path;
+
+    //Resolving the canonical path of the requested file
+    char file_canonical[PATH_MAX];
+    if (realpath(combined_path.c_str(), file_canonical) == nullptr) {
+        return false;
+    }
+
+    resolved_full_path = std::string(file_canonical);
+
+    string base_str(base_canonical);
+    if (resolved_full_path.rfind(base_str, 0) != 0) {
+        return false; // Path traversal detected! File is outside web root.
+    }
+
+    return true;
 }
