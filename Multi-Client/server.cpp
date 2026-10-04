@@ -2,6 +2,7 @@
 #include <string>
 #include <sstream>
 #include <unordered_map>
+#include <vector>
 #include <cctype>
 #include <algorithm>
 #include <cstring>
@@ -11,6 +12,7 @@
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <thread>
+#include <mutex>
 
 #define PORT 8080
 #define MAX_HEADER_SIZE 8192
@@ -49,6 +51,8 @@ void handleSigint(int);
 
 volatile sig_atomic_t is_running = 1;
 
+vector<thread> client_threads;
+mutex threads;
 
 // Main server
 int main() {
@@ -98,10 +102,16 @@ int main() {
             continue;
         }
 
-        std::thread(handleClient, client_fd).detach(); // Making an independent thread for each client 
+        lock_guard<mutex> lock(threads);
+        client_threads.emplace_back(handleClient,client_fd);
     }
 
     close(listen_fd);
+
+    for(auto &i : client_threads){
+        if(i.joinable()) i.join();
+    }
+    client_threads.clear();
     logMessage(LogLevel::INFO, "Server shutting down gracefully.");
     return 0;
 }
@@ -167,7 +177,7 @@ int parseRequest(const string& raw_buffer, HttpRequest& req) {
     string line;
 
     if (!(stream >> req.method >> req.target >> req.version)) return 400;
-    if (req.method != "GET") return 501;
+    if (req.method != "GET") return 405;
     if (req.target.find("..") != string::npos) return 403;
 
     getline(stream, line);
