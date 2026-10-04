@@ -15,3 +15,5 @@ LOGS:
 ![Alternative text description](images/demo4.png)
 6. Handles Ctrl+C signal - (SIGINT) and gracefully shuts down the Server
 ![Alternative text description](images/demo5.png)
+7. Added MultiClient Support making the Server to handle multiple thread simulatenously
+![Alternative text description](images/demo6.png)
