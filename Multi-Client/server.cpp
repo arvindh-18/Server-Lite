@@ -15,6 +15,7 @@
 #include <sys/socket.h>
 #include <thread>
 #include <mutex>
+#include <fstream>
 
 #define PORT 8080
 #define MAX_HEADER_SIZE 8192
@@ -42,7 +43,7 @@ struct HttpRequest {
 };
 
 bool sendAll(int,const char*,size_t);
-void sendResponse(int,int,string,const string&);
+void sendResponse(int,int,string,const string&,const string&);
 void sendErrorResponse(int,int);
 string trim(const string&);
 string toLower(string);
@@ -134,11 +135,11 @@ bool sendAll(int socket_fd, const char* data, size_t length) {
 }
 
 //This function will contruct the HTTP reponase and send it to the client by calling sendAll funciton.
-void sendResponse(int client_fd, int statusCode, string statusText, const string& body) {
+void sendResponse(int client_fd, int statusCode, string statusText,const string& body,const string& content = "text/plain") {
     ostringstream response;
     response << "HTTP/1.1 " << statusCode << " " << statusText << "\r\n"
              << "Content-Length: " << body.size() << "\r\n"
-             << "Content-Type: text/plain\r\n"
+             << "Content-Type: " << content << "\r\n"
              << "Connection: close\r\n\r\n"
              << body;
 
@@ -152,7 +153,7 @@ void sendErrorResponse(int client_fd, int statusCode) {
     string statusText;
     if(it == STATUS_MESSAGES.end()) statusText = "Error";
     statusText = it->second;
-    sendResponse(client_fd, statusCode,statusText, to_string(statusCode) + " " + statusText + "\r\n");
+    sendResponse(client_fd, statusCode,statusText,to_string(statusCode) + " " + statusText + "\r\n");
 }
 
 //This function will trim the leading and trailing whitespaces
@@ -230,17 +231,28 @@ void handleClient(int client_fd) {
     if (status != 200) {
         logMessage(LogLevel::WARN, "Rejected request with status " + to_string(status));
         sendErrorResponse(client_fd, status);
-    } else if (req.target == "/") {
-        logMessage(LogLevel::INFO, req.method + " " + req.target + " - 200 OK");
-        sendResponse(client_fd, 200, "OK", "Welcome to Light Server!\r\n");
-    } else {
+    } 
+    else if (req.target == "/") {
+        ifstream file("./public/index.html", ios::binary);
+        if (file.is_open()) {
+            ostringstream ss;
+            ss << file.rdbuf();
+            string html = ss.str();
+
+            logMessage(LogLevel::INFO, req.method + " " + req.target + " - 200 OK");
+            sendResponse(client_fd, 200, "OK", html, "text/html");
+        } 
+    }
+    else {
         string web_root = "./public";
+        string user_file = req.target;
         string resolved_path;
         if (isSafePath(web_root, user_file, resolved_path)) {
             // Path is safe and file exists! (You can read and send the file here later)
             logMessage(LogLevel::INFO, req.method + " " + req.target + " - 200 OK (File Found)");
             sendResponse(client_fd, 200, "OK", "File found at: " + resolved_path + "\r\n");
-        } else {
+        } 
+        else {
             // Path traversal detected or file doesn't exist
             logMessage(LogLevel::WARN, "Blocked path traversal or file not found: " + req.target);
             sendErrorResponse(client_fd, 403); 
