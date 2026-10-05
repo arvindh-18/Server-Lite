@@ -29,5 +29,6 @@ LOGS:
 ![Alternative text description](images/demo5.png)
 
 7. Added MultiClient Support making the Server to handle multiple thread simulatenously
+
 ![Alternative text description](images/demo6.png)
 8. Now the Server instead of sending a plain/text reponse it can now send .html responses
